@@ -1,0 +1,98 @@
+-- Full Remote Logger (2 chiều) - yêu cầu exploit hỗ trợ hookmetamethod & hookfunction
+
+-- ========= Helper: stringify giá trị, hỗ trợ bảng lồng nhau =========
+local function toStr(v, indent, seen)
+	indent = indent or 0
+	seen = seen or {}
+	local pad = string.rep("    ", indent)
+	local tv = typeof(v)
+
+	if tv == "number" or tv == "boolean" or tv == "nil" then
+		return tostring(v)
+	elseif tv == "string" then
+		return string.format("%q", v)
+	elseif tv == "Instance" then
+		return "game." .. v:GetFullName()
+	elseif tv == "Vector3" then
+		return string.format("Vector3.new(%s, %s, %s)", v.X, v.Y, v.Z)
+	elseif tv == "Vector2" then
+		return string.format("Vector2.new(%s, %s)", v.X, v.Y)
+	elseif tv == "CFrame" then
+		return "CFrame.new(" .. tostring(v) .. ")"
+	elseif tv == "Color3" then
+		return string.format("Color3.new(%s, %s, %s)", v.R, v.G, v.B)
+	elseif tv == "EnumItem" or tv == "BrickColor" or tv == "userdata" then
+		return tostring(v)
+	elseif tv == "table" then
+		if seen[v] then return "<recursive>" end
+		seen[v] = true
+		local lines = {"{"}
+		for k,val in pairs(v) do
+			local kStr = toStr(k, indent+1, seen)
+			local vStr = toStr(val, indent+1, seen)
+			table.insert(lines, string.format("%s[%s] = %s", pad.."    ", kStr, vStr))
+		end
+		table.insert(lines, pad.."}")
+		return table.concat(lines, "\n")
+	else
+		return string.format("<%s:%s>", tv, tostring(v))
+	end
+end
+
+local function printArgs(args)
+	for i, val in ipairs(args) do
+		print(("Arg[%d]:\n%s"):format(i, toStr(val, 1)))
+	end
+end
+
+-- ========= Log Client -> Server (FireServer / InvokeServer) =========
+local originalNamecall
+local originalFire
+local originalInvoke
+
+do
+	-- hook __namecall
+	local function onNamecall(self, ...)
+		local method = getnamecallmethod()
+		if typeof(self) == "Instance" and (method == "FireServer" or method == "InvokeServer" or method == "fireServer" or method == "invokeServer") then
+			local args = {...}
+			if method:lower():find("fire") then
+				print("=== CLIENT FIRED REMOTE ===")
+			else
+				print("=== CLIENT INVOKED REMOTE ===")
+			end
+			print("Remote:", self:GetFullName())
+			printArgs(args)
+			print(method:lower():find("fire") and "===========================" or "============================")
+		end
+		return originalNamecall(self, ...)
+	end
+
+	-- hook direct :FireServer()
+	local dummyRE = Instance.new("RemoteEvent")
+	originalFire = hookfunction(dummyRE.FireServer, function(self, ...)
+		if typeof(self) == "Instance" and self:IsA("RemoteEvent") then
+			print("=== CLIENT FIRED REMOTE (direct) ===")
+			print("Remote:", self:GetFullName())
+			printArgs({...})
+			print("====================================")
+		end
+		return originalFire(self, ...)
+	end)
+
+	-- hook direct :InvokeServer()
+	local dummyRF = Instance.new("RemoteFunction")
+	originalInvoke = hookfunction(dummyRF.InvokeServer, function(self, ...)
+		if typeof(self) == "Instance" and self:IsA("RemoteFunction") then
+			print("=== CLIENT INVOKED REMOTE (direct) ===")
+			print("Remote:", self:GetFullName())
+			printArgs({...})
+			print("======================================")
+		end
+		return originalInvoke(self, ...)
+	end)
+
+	originalNamecall = hookmetamethod(game, "__namecall", newcclosure(onNamecall))
+end
+
+print("[RemoteSpy] Đã bật logger 2 chiều. Xem log trong console/Output.")
